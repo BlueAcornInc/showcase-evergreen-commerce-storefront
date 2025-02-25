@@ -113,6 +113,70 @@ function setMetaTags(dropin) {
   createMetaTag('og:url', window.location.href, 'property');
 }
 
+// Function to create a payment session with the OOPE payment gateway (Adyen/Stripe)
+async function createSession(endpoint, request) {
+  return (
+    await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    })
+  ).json();
+}
+
+// Function to start payment flow when an OOPE method is selected
+async function startPayment(cartData, environment, sessionUrl, clientKey, returnUrl) {
+  const createSessionRequest = {
+    amount: {
+      value: cartData.prices.grandTotal.value,
+      currency: cartData.prices.grandTotal.currency,
+    },
+    reference: cartData.id,
+    returnUrl,
+    countryCode: cartData.billingAddress.country.code,
+  };
+
+  // Create session from the payment gateway
+  const sessionData = await createSession(sessionUrl, createSessionRequest);
+
+  const configuration = {
+    session: {
+      id: sessionData.message.id,
+      sessionData: sessionData.message.sessionData,
+    },
+    environment,
+    amount: {
+      value: sessionData.message.amount.value,
+      currency: sessionData.message.amount.currency,
+    },
+    locale: sessionData.message.shopperLocale,
+    countryCode: sessionData.message.countryCode,
+    clientKey,
+    analytics: {
+      enabled: true,
+    },
+    onPaymentCompleted: async () => {
+      // Place an order once payment is completed
+      await orderApi.placeOrder();
+    },
+  };
+
+  // Mount the Adyen Drop-in component UI
+  await mountPaymentDropin('#id-to-mount', configuration);
+}
+
+// Function to mount the payment UI (Adyen/Stripe)
+async function mountPaymentDropin(mountId, configuration) {
+  await window.AdyenWeb.AdyenCheckout(configuration).then((checkout) => {
+    const dropin = new window.AdyenWeb.Dropin(checkout, {
+      paymentMethodComponents: [window.AdyenWeb.Card],
+    });
+    dropin.mount(mountId);
+  });
+}
+
 export default async function decorate(block) {
   // Initializers
   import('../../scripts/initializers/account.js');
@@ -417,9 +481,9 @@ export default async function decorate(block) {
 
         if (
           success
-          && shippingFormRef.current
-          && shippingForm
-          && shippingForm.checkVisibility()
+              && shippingFormRef.current
+              && shippingForm
+              && shippingForm.checkVisibility()
         ) {
           success = shippingFormRef.current.handleValidationSubmit(false);
         }
@@ -428,9 +492,9 @@ export default async function decorate(block) {
 
         if (
           success
-          && billingFormRef.current
-          && billingForm
-          && billingForm.checkVisibility()
+              && billingFormRef.current
+              && billingForm
+              && billingForm.checkVisibility()
         ) {
           success = billingFormRef.current.handleValidationSubmit(false);
         }
@@ -440,17 +504,18 @@ export default async function decorate(block) {
       handlePlaceOrder: async ({ cartId, code }) => {
         await displayOverlaySpinner();
         try {
-          // Payment Services credit card
-          if (code === PaymentMethodCode.CREDIT_CARD) {
+          if (code === 'oope_adyen' || code === 'oope_stripe') {
+            // Start payment when OOPE payment method (Adyen/Stripe) is selected
+            await startPayment(cartData, environment, sessionUrl, clientKey, returnUrl);
+          } else if (code === PaymentMethodCode.CREDIT_CARD) {
+            // Validate and submit credit card form
             if (!creditCardFormRef.current) {
               console.error('Credit card form not rendered.');
               return;
             }
             if (!creditCardFormRef.current.validate()) {
-              // Credit card form invalid; abort order placement
               return;
             }
-            // Submit Payment Services credit card form
             await creditCardFormRef.current.submit();
           }
           // Place order
