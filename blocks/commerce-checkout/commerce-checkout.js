@@ -7,6 +7,7 @@
 // Dropin Tools
 import { events } from '@dropins/tools/event-bus.js';
 import { initializers } from '@dropins/tools/initializer.js';
+import { loadStripe } from '@stripe/stripe-js';
 
 // Dropin Components
 import {
@@ -127,7 +128,10 @@ async function createSession(endpoint, request) {
 }
 
 // Function to start payment flow when an OOPE method is selected
-async function startPayment(cartData, environment, sessionUrl, clientKey, returnUrl) {
+async function startPayment(cartData, sessionUrl, returnUrl) {
+  const stripePublicKey = 'pk_test_51QuKmmPuM5rM0PmMB3WaehAtEKcwG6y7l38fp4ZN86H5t9mkwbGxNMiA64YPXwrHqrpwM1oD6XwQ2YQP8kjdq2zZ00c2BDXf7I';
+  const stripe = await loadStripe(stripePublicKey); // Properly loads Stripe in an ES module
+
   const createSessionRequest = {
     amount: {
       value: cartData.prices.grandTotal.value,
@@ -138,33 +142,20 @@ async function startPayment(cartData, environment, sessionUrl, clientKey, return
     countryCode: cartData.billingAddress.country.code,
   };
 
-  // Create session from the payment gateway
+  // Create Stripe session
   const sessionData = await createSession(sessionUrl, createSessionRequest);
 
-  const configuration = {
-    session: {
-      id: sessionData.message.id,
-      sessionData: sessionData.message.sessionData,
-    },
-    environment,
-    amount: {
-      value: sessionData.message.amount.value,
-      currency: sessionData.message.amount.currency,
-    },
-    locale: sessionData.message.shopperLocale,
-    countryCode: sessionData.message.countryCode,
-    clientKey,
-    analytics: {
-      enabled: true,
-    },
-    onPaymentCompleted: async () => {
-      // Place an order once payment is completed
-      await orderApi.placeOrder();
-    },
-  };
+  if (sessionData.message.paymentMethod === 'oope_stripe') {
+    const { error } = await stripe.redirectToCheckout({
+      sessionId: sessionData.message.id,
+    });
 
-  // Mount the Adyen Drop-in component UI
-  await mountPaymentDropin('#id-to-mount', configuration);
+    if (error) {
+      console.error('Stripe Checkout error:', error);
+    }
+  } else {
+    console.error('Invalid payment method:', sessionData.message.paymentMethod);
+  }
 }
 
 // Function to mount the payment UI (Adyen/Stripe)
