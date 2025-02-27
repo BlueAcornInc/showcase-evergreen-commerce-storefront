@@ -1,0 +1,3 @@
+[submodule "apps/shipstation"]
+	path = apps/shipstation
+	url = https://github.com/BlueAcornInc/aio-commerce-shipstation-app.git
