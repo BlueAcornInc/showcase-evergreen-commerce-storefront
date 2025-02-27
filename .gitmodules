@@ -7,3 +7,6 @@
 [submodule "aio/shipstation"]
 	path = aio/shipstation
 	url = https://github.com/BlueAcornInc/aio-commerce-shipstation-app.git
+[submodule "aio/adyen"]
+	path = aio/adyen
+	url = https://github.com/BlueAcornInc/aio-commerce-adyen-app.git
