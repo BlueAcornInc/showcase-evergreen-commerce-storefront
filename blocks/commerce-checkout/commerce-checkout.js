@@ -7,7 +7,6 @@
 // Dropin Tools
 import { events } from '@dropins/tools/event-bus.js';
 import { initializers } from '@dropins/tools/initializer.js';
-import { loadStripe } from '@stripe/stripe-js';
 
 // Dropin Components
 import {
@@ -114,7 +113,7 @@ function setMetaTags(dropin) {
   createMetaTag('og:url', window.location.href, 'property');
 }
 
-// Function to create a payment session with the OOPE payment gateway (Adyen/Stripe)
+// Function to create a payment session with the OOPE payment gateway (Stripe)
 async function createSession(endpoint, request) {
   return (
     await fetch(endpoint, {
@@ -130,41 +129,74 @@ async function createSession(endpoint, request) {
 // Function to start payment flow when an OOPE method is selected
 async function startPayment(cartData, sessionUrl, returnUrl) {
   const stripePublicKey = 'pk_test_51QuKmmPuM5rM0PmMB3WaehAtEKcwG6y7l38fp4ZN86H5t9mkwbGxNMiA64YPXwrHqrpwM1oD6XwQ2YQP8kjdq2zZ00c2BDXf7I';
-  const stripe = await loadStripe(stripePublicKey); // Properly loads Stripe in an ES module
+  const stripe = await Stripe(stripePublicKey);
 
   const createSessionRequest = {
     amount: {
-      value: cartData.prices.grandTotal.value,
-      currency: cartData.prices.grandTotal.currency,
+      value: 200,
+      currency: 'USD',
     },
     reference: cartData.id,
     returnUrl,
-    countryCode: cartData.billingAddress.country.code,
+    countryCode: cartData.billingAddress?.country?.code || 'US',
   };
 
-  // Create Stripe session
+  // Step 1: Fetch session data from Stripe API
   const sessionData = await createSession(sessionUrl, createSessionRequest);
 
-  if (sessionData.message.paymentMethod === 'oope_stripe') {
-    const { error } = await stripe.redirectToCheckout({
-      sessionId: sessionData.message.id,
-    });
+  if (!sessionData || !sessionData.message || !sessionData.message.id) {
+    console.error('Error: Invalid session data from Stripe', sessionData);
+    alert('Payment error: Unable to create Stripe session.');
+    return;
+  }
 
-    if (error) {
-      console.error('Stripe Checkout error:', error);
+  if (sessionData.message.paymentMethod === 'oope_stripe') {
+    try {
+      const { error } = await stripe.redirectToCheckout({
+        sessionId: sessionData.message.id,
+      });
+
+      if (error) {
+        console.error('Stripe Checkout error:', error);
+        alert('Stripe Checkout failed. Please try again.');
+      }
+    } catch (err) {
+      console.error('Unexpected Stripe Error:', err);
     }
   } else {
-    console.error('Invalid payment method:', sessionData.message.paymentMethod);
+    // Prepare Stripe configuration for Elements UI
+    const configuration = {
+      sessionId: sessionData.message.id,
+      clientSecret: sessionData.message.sessionData,
+    };
+
+    await mountPaymentDropin('#stripe-payment-form', stripe, configuration);
   }
 }
 
-// Function to mount the payment UI (Adyen/Stripe)
-async function mountPaymentDropin(mountId, configuration) {
-  await window.AdyenWeb.AdyenCheckout(configuration).then((checkout) => {
-    const dropin = new window.AdyenWeb.Dropin(checkout, {
-      paymentMethodComponents: [window.AdyenWeb.Card],
+async function mountPaymentDropin(mountId, method, configuration) {
+  // Create Stripe Elements instance
+  const stripePublicKey = 'pk_test_51QuKmmPuM5rM0PmMB3WaehAtEKcwG6y7l38fp4ZN86H5t9mkwbGxNMiA64YPXwrHqrpwM1oD6XwQ2YQP8kjdq2zZ00c2BDXf7I';
+  const stripe = Stripe(stripePublicKey);
+  const elements = stripe.elements();
+
+  // Create a Card Element (for entering card details)
+  const cardElement = elements.create('card');
+  cardElement.mount(mountId);
+
+  document.querySelector('#stripe-submit').addEventListener('click', async () => {
+    const { paymentIntent, error } = await stripe.confirmCardPayment(configuration.clientSecret, {
+      payment_method: {
+        card: cardElement,
+      },
     });
-    dropin.mount(mountId);
+
+    if (error) {
+      console.error('Stripe Payment Error:', error);
+      alert('Payment failed. Please try again.');
+    } else {
+      await orderApi.placeOrder();
+    }
   });
 }
 
@@ -380,6 +412,20 @@ export default async function decorate(block) {
               ctx.replaceHTML($content);
             },
           },
+          oope_stripe: { // 💡 Add Stripe as an OOPE payment method
+            render: (ctx) => {
+              const $content = document.createElement('div');
+              $content.id = 'stripe-payment-form'; // Stripe form container
+
+              // Append the Stripe payment form container
+              ctx.replaceHTML($content);
+
+              // Mount Stripe Elements inside the container
+              setTimeout(() => {
+                mountPaymentDropin('#stripe-payment-form', ctx.cartId);
+              }, 100);
+            },
+          },
           [PaymentMethodCode.SMART_BUTTONS]: {
             enabled: false,
           },
@@ -493,11 +539,13 @@ export default async function decorate(block) {
         return success;
       },
       handlePlaceOrder: async ({ cartId, code }) => {
-        await displayOverlaySpinner();
         try {
-          if (code === 'oope_adyen' || code === 'oope_stripe') {
-            // Start payment when OOPE payment method (Adyen/Stripe) is selected
-            await startPayment(cartData, environment, sessionUrl, clientKey, returnUrl);
+          if (code === 'oope_stripe') {
+            // Fetch cart data
+            let cartData = await cartApi.getCartData(); // Ensure this fetches the correct data
+            const sessionUrl = 'https://api.stripe.com/';
+            const returnUrl = `${window.location.origin}/checkout/success`;
+            await startPayment(cartData, sessionUrl, returnUrl);
           } else if (code === PaymentMethodCode.CREDIT_CARD) {
             // Validate and submit credit card form
             if (!creditCardFormRef.current) {
@@ -509,7 +557,7 @@ export default async function decorate(block) {
             }
             await creditCardFormRef.current.submit();
           }
-          // Place order
+          // Place order after successful payment
           await orderApi.placeOrder(cartId);
         } catch (error) {
           console.error(error);
