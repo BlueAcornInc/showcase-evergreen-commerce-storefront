@@ -10,7 +10,8 @@
     "start": "aem up --print-index",
     "install:dropins": "node build.mjs && node postinstall.js",
     "postinstall": "npm run install:dropins",
-    "postupdate": "npm run install:dropins"
+    "postupdate": "npm run install:dropins",
+    "submodule-update": "git submodule update --init --recursive"
   },
   "repository": {
     "type": "git",
